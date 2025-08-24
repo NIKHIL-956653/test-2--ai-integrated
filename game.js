@@ -8,9 +8,12 @@
   };
 
   const defaultColors = ["#ff4757", "#1e90ff", "#2ed573", "#ecc668", "#FFA500", "#800080"];
+  const AI_DELAY = 750; // AI thinking delay in ms
 
   let rows = 9, cols = 9;
   let players = [];
+  // playerTypes[i] = {type: "human"|"ai", difficulty: "easy"|"medium"|"hard"|null}
+  let playerTypes = [];
   let current = 0, board = [], playing = true, firstMove = [], history = [];
   let scores = [];
 
@@ -31,8 +34,71 @@
 
   let mode = "normal";
   let timer = null;
-  let timeLimit = 120; // default 2 mins
+  let timeLimit = 120; // seconds
   let timeLeft = timeLimit;
+
+  function buildPlayerSettings(count) {
+    playerSettingsContainer.innerHTML = "";
+    players = [];
+    playerTypes = [];
+    scores = new Array(count).fill(0);
+
+    for (let i = 0; i < count; i++) {
+      const div = el("div", "player-setting");
+
+      const labelName = el("label", "");
+      labelName.textContent = `Player ${i + 1} Name: `;
+      const nameInput = el("input", "", { type: "text", placeholder: `Player ${i + 1}` });
+      labelName.appendChild(nameInput);
+
+      const labelType = el("label", "");
+      labelType.textContent = " Type: ";
+      const typeSelect = el("select", "");
+      typeSelect.innerHTML = `
+        <option value="human" selected>Human</option>
+        <option value="easy">AI Easy</option>
+        <option value="medium">AI Medium</option>
+        <option value="hard">AI Hard</option>
+      `;
+      labelType.appendChild(typeSelect);
+
+      const labelP = el("label", "");
+      labelP.textContent = `Player ${i + 1} Color: `;
+      const colorInput = el("input", "", { type: "color", value: defaultColors[i] });
+      labelP.appendChild(colorInput);
+
+      div.append(labelName, labelType, labelP);
+      playerSettingsContainer.appendChild(div);
+
+      players.push({ name: "", color: colorInput.value });
+      playerTypes.push({ type: "human", difficulty: null });
+
+      nameInput.addEventListener("input", (e) => {
+        players[i].name = e.target.value.trim() || `Player ${i + 1}`;
+        updateStatus();
+        renderScores();
+      });
+
+      colorInput.addEventListener("input", (e) => {
+        players[i].color = e.target.value;
+        paintAll();
+        renderScores();
+      });
+
+      typeSelect.addEventListener("change", (e) => {
+        const val = e.target.value;
+        if (val === "human") {
+          playerTypes[i] = { type: "human", difficulty: null };
+        } else {
+          playerTypes[i] = { type: "ai", difficulty: val };
+        }
+        if (playing && current === i) {
+          processTurn();
+        }
+      });
+    }
+    resetGame();
+  }
 
   modeSelect.addEventListener("change", () => {
     mode = modeSelect.value;
@@ -54,6 +120,13 @@
       resetGame();
     }
   });
+
+  newBtn.addEventListener("click", resetGame);
+  undoBtn.addEventListener("click", undoMove);
+  playerCountSelect.addEventListener("change", () => buildPlayerSettings(parseInt(playerCountSelect.value, 10)));
+  gridSelect.addEventListener("change", resetGame);
+
+  let aiTimeout = null;
 
   function startTimer() {
     stopTimer();
@@ -167,49 +240,10 @@
   }
 
   function init() {
-    bindUI();
     buildPlayerSettings(parseInt(playerCountSelect.value, 10));
   }
 
-  function bindUI() {
-    newBtn.addEventListener("click", resetGame);
-    undoBtn.addEventListener("click", undoMove);
-    playerCountSelect.addEventListener("change", () =>
-      buildPlayerSettings(parseInt(playerCountSelect.value, 10))
-    );
-    gridSelect.addEventListener("change", resetGame);
-  }
-
-  function buildPlayerSettings(count) {
-    playerSettingsContainer.innerHTML = "";
-    players = [];
-    scores = new Array(count).fill(0);
-    for (let i = 0; i < count; i++) {
-      const div = el("div", "player-setting");
-      const labelName = el("label", "");
-      labelName.textContent = `Player ${i + 1} Name: `;
-      const nameInput = el("input", "", { type: "text", placeholder: `Player ${i + 1}` });
-      labelName.appendChild(nameInput);
-      const labelP = el("label", "");
-      labelP.textContent = `Player ${i + 1} Color: `;
-      const colorInput = el("input", "", { type: "color", value: defaultColors[i] });
-      labelP.appendChild(colorInput);
-      div.append(labelName, labelP);
-      playerSettingsContainer.appendChild(div);
-      players.push({ name: "", color: colorInput.value });
-      nameInput.addEventListener("input", (e) => {
-        players[i].name = e.target.value.trim() || `Player ${i + 1}`;
-        updateStatus();
-        renderScores();
-      });
-      colorInput.addEventListener("input", (e) => {
-        players[i].color = e.target.value;
-        paintAll();
-        renderScores();
-      });
-    }
-    resetGame();
-  }
+  // Core gameplay flow
 
   function resetGame() {
     const [c, r] = gridSelect.value.split("x").map(Number);
@@ -228,16 +262,184 @@
     } else {
       stopTimer();
     }
+
+    if(playerTypes[current].type === "ai") processTurn();
+  }
+
+  function updateScores() {
+    scores = players.map(() => 0);
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const owner = board[y][x].owner;
+        if (owner !== -1) {
+          scores[owner] += board[y][x].count;
+        }
+      }
+    }
+    renderScores();
+  }
+
+  function renderScores() {
+    scoreDisplay.innerHTML = players
+      .map((p, i) =>
+        `<span style="color: ${p.color}; font-weight:700; margin-right: 12px;">${p.name || 'Player ' + (i + 1)}: ${scores[i]}</span>`
+      )
+      .join("");
   }
 
   function advanceTurn() {
     current = (current + 1) % players.length;
     updateStatus();
     paintAll();
+    if (playing) {
+      if(playerTypes[current].type === "ai") processTurn();
+    }
+  }
+
+  function processTurn() {
+    if (!playing) return;
+    const p = playerTypes[current];
+    if (p.type === "ai") {
+      aiTimeout = setTimeout(() => {
+        makeAIMove(current, p.difficulty);
+      }, AI_DELAY);
+    }
+  }
+
+  function makeAIMove(playerIndex, difficulty) {
+    if (difficulty === "easy") {
+      makeRandomMove(playerIndex);
+    } else if (difficulty === "medium") {
+      makeMediumMove(playerIndex);
+    } else if (difficulty === "hard") {
+      makeHardMove(playerIndex);
+    }
+  }
+
+  function makeRandomMove(playerIndex) {
+    let validMoves = [];
+    for (let y=0; y < rows; y++) {
+      for (let x=0; x < cols; x++) {
+        const cell = board[y][x];
+        if (cell.owner === -1 || cell.owner === playerIndex) validMoves.push([x, y]);
+      }
+    }
+    if (validMoves.length === 0) {
+      advanceTurn();
+      return;
+    }
+    const [x, y] = validMoves[Math.floor(Math.random() * validMoves.length)];
+    makeMove(x, y);
+  }
+
+  // Medium AI prefers moves that cause reactions or expand current control
+  function makeMediumMove(playerIndex) {
+    let candidateMoves = [];
+
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const cell = board[y][x];
+        if (cell.owner === -1 || cell.owner === playerIndex) {
+          let score = 0;
+          if (cell.count + 1 >= capacity(x, y)) score += 5; // blast possible
+          else if (cell.owner === playerIndex) score += 2; // expand
+          candidateMoves.push({ x, y, score });
+        }
+      }
+    }
+
+    if (candidateMoves.length === 0) {
+      advanceTurn();
+      return;
+    }
+    candidateMoves.sort((a, b) => b.score - a.score);
+    const topMoves = candidateMoves.slice(0, 3);
+    const chosen = topMoves[Math.floor(Math.random() * topMoves.length)];
+    makeMove(chosen.x, chosen.y);
+  }
+
+  // Hard AI simulates moves for maximum advantage
+  function makeHardMove(playerIndex) {
+    let bestMove = null;
+    let bestScore = -Infinity;
+
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const cell = board[y][x];
+        if (cell.owner === -1 || cell.owner === playerIndex) {
+          let score = simulateMoveScore(x, y, playerIndex);
+          if (score > bestScore) {
+            bestScore = score;
+            bestMove = { x, y };
+          }
+        }
+      }
+    }
+
+    if (!bestMove) {
+      advanceTurn();
+      return;
+    }
+    makeMove(bestMove.x, bestMove.y);
+  }
+
+  function simulateMoveScore(x, y, playerIndex) {
+    let simBoard = board.map(row => row.map(cell => ({ ...cell })));
+    if (simBoard[y][x].owner === -1 || simBoard[y][x].owner === playerIndex) {
+      simBoard[y][x].owner = playerIndex;
+      simBoard[y][x].count += 1;
+    }
+
+    let scoreGain = 0;
+    let q = [];
+
+    const simCapacity = (cx, cy) => {
+      const edges = [cy === 0, cy === rows - 1, cx === 0, cx === cols - 1].filter(Boolean).length;
+      return edges === 2 ? 2 : edges === 1 ? 3 : 4;
+    };
+
+    const simNeighbors = (cx, cy) => {
+      const neigh = [];
+      if (cx > 0) neigh.push([cx - 1, cy]);
+      if (cx < cols - 1) neigh.push([cx + 1, cy]);
+      if (cy > 0) neigh.push([cx, cy - 1]);
+      if (cy < rows - 1) neigh.push([cx, cy + 1]);
+      return neigh;
+    };
+
+    for (let y1 = 0; y1 < rows; y1++) {
+      for (let x1 = 0; x1 < cols; x1++) {
+        if (simBoard[y1][x1].count >= simCapacity(x1, y1)) q.push([x1, y1]);
+      }
+    }
+
+    while (q.length > 0) {
+      const [cx, cy] = q.shift();
+      const cap = simCapacity(cx, cy);
+      const cell = simBoard[cy][cx];
+      if (cell.count < cap) continue;
+      cell.count -= cap;
+      if (cell.count === 0) cell.owner = -1;
+      else if(cell.owner === playerIndex) scoreGain += cell.count;
+
+      for (const [nx, ny] of simNeighbors(cx, cy)) {
+        const ncell = simBoard[ny][nx];
+        if (ncell.owner !== playerIndex) {
+          scoreGain += ncell.count;
+        }
+        ncell.owner = playerIndex;
+        ncell.count += 1;
+        if (ncell.count >= simCapacity(nx, ny)) {
+          q.push([nx, ny]);
+        }
+      }
+    }
+    return scoreGain;
   }
 
   function handleMove(x, y) {
     if (!playing) return;
+    if(playerTypes[current].type === "ai") return; // block human attempt on AI turn
     const cell = board[y][x];
     if (cell.owner !== -1 && cell.owner !== current) return;
     makeMove(x, y);
@@ -285,27 +487,6 @@
       for (const p of toInc) q.push(p);
       await sleep(120);
     }
-  }
-
-  function updateScores() {
-    scores = players.map(() => 0);
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < cols; x++) {
-        const owner = board[y][x].owner;
-        if (owner !== -1) {
-          scores[owner] += board[y][x].count;
-        }
-      }
-    }
-    renderScores();
-  }
-
-  function renderScores() {
-    scoreDisplay.innerHTML = players
-      .map((p, i) =>
-        `<span style="color: ${p.color}; font-weight:700; margin-right: 12px;">${p.name || 'Player ' + (i + 1)}: ${scores[i]}</span>`
-      )
-      .join("");
   }
 
   function paintAll() {
